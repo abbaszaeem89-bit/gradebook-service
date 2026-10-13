@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from errors import ConflictError, GradebookError, NotFoundError, ValidationError
-from models import parse_assessment, parse_mark, parse_student
+from models import Mark, parse_assessment, parse_mark, parse_student
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,35 @@ def pct(sid: str) -> str:
     if total == 0.0:
         return "0"
     return str(round(got, 2))
+
+
+def now() -> str:
+    return str(datetime.datetime.now(datetime.timezone.utc))
+
+
+def add_mark(
+    state: dict[str, Any],
+    mark: Mark,
+    now: Callable[[], str],
+    save: Callable[[], None],
+) -> None:
+    """Check a mark against the gradebook, then record it and save."""
+    if mark.student not in state["students"]:
+        raise NotFoundError(f"no such student: {mark.student}")
+    assessment_row = state["assessments"].get(mark.assessment)
+    if assessment_row is None:
+        raise NotFoundError(f"no such assessment: {mark.assessment}")
+    if mark.score > assessment_row["total"]:
+        raise ValidationError("score exceeds assessment total")
+    state["marks"].append(
+        {
+            "student": mark.student,
+            "assessment": mark.assessment,
+            "score": mark.score,
+            "at": now(),
+        }
+    )
+    save()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -125,33 +154,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             STATE["assessments"][assessment.id] = {
                 "id": assessment.id,
                 "title": assessment.title,
-                "weight": str(assessment.weight),
-                "total": str(assessment.total),
+                "weight": assessment.weight,
+                "total": assessment.total,
             }
             save()
             return 200, STATE["assessments"][assessment.id]
 
         if self.path == "/marks":
             mark = parse_mark(payload)
-            if mark.student not in STATE["students"]:
-                raise NotFoundError(f"Student '{mark.student}' not found")
-            if mark.assessment not in STATE["assessments"]:
-                raise NotFoundError(f"Assessment '{mark.assessment}' not found")
-            assessment_record = STATE["assessments"][mark.assessment]
-            assessment_total = float(assessment_record["total"])
-            if mark.score > assessment_total:
-                raise ValidationError(
-                    f"Score {mark.score} cannot exceed assessment total {assessment_total}"
-                )
-            STATE["marks"].append(
-                {
-                    "student": mark.student,
-                    "assessment": mark.assessment,
-                    "score": str(mark.score),
-                    "at": str(datetime.datetime.now(datetime.timezone.utc)),
-                }
-            )
-            save()
+            add_mark(STATE, mark, now, save)
             logger.info("recorded mark for %s score %s", mark.student, mark.score)
             return 200, {"ok": True}
 

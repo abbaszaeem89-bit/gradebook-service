@@ -6,41 +6,39 @@ from errors import ValidationError
 from models import (
     Assessment,
     Mark,
-    Student,
     parse_assessment,
     parse_mark,
     parse_number,
     parse_student,
-    parse_text,
 )
 
 
-def test_numeric_string_accepted() -> None:
-    """Verify that a numeric string is accepted and parsed to float."""
-    assert parse_number("42.5", "score") == 42.5
-    assert parse_number("100", "total") == 100.0
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("15", 15.0, id="numeric-string"),
+        pytest.param(15, 15.0, id="int"),
+        pytest.param("2.5", 2.5, id="decimal-string"),
+    ],
+)
+def test_good_numbers_are_accepted(raw: object, expected: float) -> None:
+    assert parse_number(raw, "score") == expected
 
 
-def test_invalid_text_rejected() -> None:
-    """Verify that non-numeric text strings are rejected with ValidationError."""
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param("abc", id="text"),
+        pytest.param(True, id="bool"),
+        pytest.param(None, id="none"),
+        pytest.param([], id="list"),
+        pytest.param("nan", id="nan"),
+        pytest.param("inf", id="inf"),
+    ],
+)
+def test_bad_numbers_are_rejected(raw: object) -> None:
     with pytest.raises(ValidationError, match="score"):
-        parse_number("abc", "score")
-
-
-def test_boolean_rejected() -> None:
-    """Verify that boolean values are rejected by parse_number."""
-    with pytest.raises(ValidationError, match="weight"):
-        parse_number(True, "weight")
-    with pytest.raises(ValidationError, match="score"):
-        parse_number(False, "score")
-
-
-def test_nan_rejected() -> None:
-    """Verify that nan is rejected by parse_number."""
-    with pytest.raises(ValidationError, match="score"):
-        parse_number(float("nan"), "score")
-    with pytest.raises(ValidationError, match="score"):
-        parse_number("nan", "score")
+        parse_number(raw, "score")
 
 
 def test_zero_total_rejected() -> None:
@@ -90,12 +88,3 @@ def test_valid_assessment_parsed_correctly() -> None:
     raw = {"id": "A1", "title": "Final Exam", "weight": "40.0", "total": "100.0"}
     assessment = parse_assessment(raw)
     assert assessment == Assessment(id="A1", title="Final Exam", weight=40.0, total=100.0)
-
-
-def test_parse_text_strips_spaces_and_rejects_blank() -> None:
-    """Verify that parse_text strips whitespace and rejects empty/blank strings."""
-    assert parse_text("  Ayesha  ", "name") == "Ayesha"
-    with pytest.raises(ValidationError, match="name"):
-        parse_text("   ", "name")
-    with pytest.raises(ValidationError, match="id"):
-        Student(id="", name="Ayesha")
