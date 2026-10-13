@@ -4,6 +4,8 @@ import http.server
 import json
 import logging
 import sys
+from collections.abc import Callable
+from typing import Any
 
 from errors import ConflictError, GradebookError, NotFoundError, ValidationError
 from models import parse_assessment, parse_mark, parse_student
@@ -11,10 +13,10 @@ from models import parse_assessment, parse_mark, parse_student
 logger = logging.getLogger(__name__)
 
 DATA = "gradebook.json"
-STATE = {"students": {}, "assessments": {}, "marks": []}
+STATE: dict[str, Any] = {"students": {}, "assessments": {}, "marks": []}
 
 
-def load():
+def load() -> None:
     global STATE
     try:
         with open(DATA) as f:
@@ -23,12 +25,12 @@ def load():
         STATE = {"students": {}, "assessments": {}, "marks": []}
 
 
-def save():
+def save() -> None:
     with open(DATA, "w") as f:
         json.dump(STATE, f)
 
 
-def pct(sid):
+def pct(sid: str) -> str:
     total = 0.0
     got = 0.0
     for m in STATE["marks"]:
@@ -43,10 +45,10 @@ def pct(sid):
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
+    def log_message(self, format: str, *args: object) -> None:
         pass
 
-    def _send(self, code, obj):
+    def _send(self, code: int, obj: object) -> None:
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -54,7 +56,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def handle_request(self, handler):
+    def handle_request(self, handler: Callable[[], tuple[int, object]]) -> None:
         try:
             status, body = handler()
         except ValidationError as err:
@@ -70,7 +72,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status, body = 500, {"error": "internal error"}
         self._send(status, body)
 
-    def handle_get(self):
+    def handle_get(self) -> tuple[int, object]:
         if self.path == "/students":
             return 200, list(STATE["students"].values())
         if self.path.startswith("/students/"):
@@ -92,7 +94,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return 200, out
         raise NotFoundError(f"Route '{self.path}' not found")
 
-    def handle_post(self):
+    def handle_post(self) -> tuple[int, object]:
         length_header = self.headers.get("Content-Length", "0")
         try:
             n = int(length_header)
@@ -100,7 +102,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise ValidationError("Invalid Content-Length header")
         raw = self.rfile.read(n)
         try:
-            payload = json.loads(raw)
+            payload: object = json.loads(raw)
         except Exception as err:
             raise ValidationError(f"Invalid JSON: {err}") from err
 
@@ -155,19 +157,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         raise NotFoundError(f"Route '{self.path}' not found")
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         self.handle_request(self.handle_get)
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         self.handle_request(self.handle_post)
 
 
-def main(argv=sys.argv):
+def main(argv: list[str] | None = None) -> None:
+    args = sys.argv if argv is None else argv
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     load()
     port = 8000
-    if len(argv) > 1:
-        port = int(argv[1])
+    if len(args) > 1:
+        port_str = args[1]
+        try:
+            port = int(port_str)
+        except ValueError:
+            raise SystemExit(
+                f"Port must be a whole number between 1 and 65535, got {port_str!r}"
+            )
+        if port < 1 or port > 65535:
+            raise SystemExit(f"Port must be between 1 and 65535, got {port}")
     logger.info("gradebook on %s", port)
     http.server.HTTPServer(("", port), Handler).serve_forever()
 
