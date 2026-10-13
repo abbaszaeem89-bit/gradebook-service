@@ -167,3 +167,49 @@ Running `ruff check .` identifies 3 bare `except:` clauses:
 * Catches `BaseException`, including `KeyboardInterrupt` (Ctrl+C) and `SystemExit`, preventing clean program shutdown.
 * Silently swallows unintended bugs such as `NameError`, `TypeError`, disk permission errors (`PermissionError`), or disk full conditions (`OSError`).
 * In `save()`, failure to write state to disk is suppressed without warning (`except: pass`), leading to silent data loss.
+
+---
+
+## 4. Task 8: Repeating Task 2 Requests on Refactored Service
+
+After implementing domain exceptions, strict dataclass validation, payload parsers, and the HTTP error boundary in `gradebook.py`, the Task 2 requests were repeated against the updated service.
+
+### Summary Comparison Table
+
+| Case | Request Description | Legacy Behavior | Refactored Behavior | Status Code |
+| :--- | :--- | :--- | :--- | :--- |
+| **(a)** | `GET /students/NOPE` | `200 {"error": "not found"}` | `404 {"error": "Student 'NOPE' not found"}` | **404 Not Found** |
+| **(b)** | `POST /students` body `5` | Server unhandled `TypeError`, socket dropped (`no reply`) | `400 {"error": "Student payload must be a dict"}` | **400 Bad Request** |
+| **(c)** | `POST /marks` score `"abc"` then `GET /students/S1` | Accepted bad data (`200`), state corrupted; `GET` crashed with unhandled `ValueError` (`no reply`) | Rejected immediately with `400 {"error": "Field 'score' must be a valid number, got 'abc'"}`; `GET /students/S1` returns `200` intact | **400 Bad Request** |
+| **(d)** | `POST /assessments` total `"0"` then `GET /report` | Accepted `0` total (`200`), state corrupted; `GET /report` crashed with `ZeroDivisionError` (`no reply`) | Rejected immediately with `400 {"error": "total must be greater than 0"}`; state remains clean | **400 Bad Request** |
+| **(e)** | `POST /marks` for non-existent assessment | Silently recorded orphan mark (`200 {"ok": true}`) | Rejected with `404 {"error": "Assessment 'NONEXISTENT' not found"}` | **404 Not Found** |
+
+### Detailed Results
+
+#### (a) `GET /students/NOPE`
+* **Response:** `404 Not Found`
+* **Body:** `{"error": "Student 'NOPE' not found"}`
+* **Server Window:** Clean request dispatch, no unhandled exceptions.
+
+#### (b) `POST /students` with body `5`
+* **Response:** `400 Bad Request`
+* **Body:** `{"error": "Student payload must be a dict"}`
+* **Server Window:** Error boundary handled validation cleanly, returned 400.
+
+#### (c) `POST /marks` score `"abc"` then `GET /students/S1`
+* **Response to POST:** `400 Bad Request`
+* **Body:** `{"error": "Field 'score' must be a valid number, got 'abc'"}`
+* **Response to GET:** `200 OK`
+* **Body:** `{"id": "S1", "name": "Ayesha", "joined": "...", "percentage": "0"}`
+* **Server Window:** Bad mark was blocked at input boundary; storage was never corrupted; subsequent student calculation succeeded without crashes.
+
+#### (d) `POST /assessments` total `"0"` then `GET /report`
+* **Response to POST:** `400 Bad Request`
+* **Body:** `{"error": "total must be greater than 0"}`
+* **Server Window:** Model validation stopped zero-total assessment before persistence; `/report` remains error-free.
+
+#### (e) `POST /marks` for non-existent assessment
+* **Response:** `404 Not Found`
+* **Body:** `{"error": "Assessment 'NONEXISTENT' not found"}`
+* **Server Window:** Foreign-key reference verified against `STATE["assessments"]`; orphan mark prevented.
+
