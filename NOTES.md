@@ -315,8 +315,24 @@ After undoing the change:
 ## Task 5: What Coverage Does and Does Not Tell You
 * **Updated Test Coverage:** 34% (56% across core modules `gradebook.py`, `models.py`, `errors.py`, `rules.py`).
 * **Weak Test Experiment:**
-  * Running only `tests/test_weak.py` (which added a mark and called `pct("S1")` without any assertions) covered almost every executable line of `pct()`.
-  * Mutating the calculation operator from `/` to `*` (`got * float(a["weight"]) * float(a["total"])`) still resulted in a passing test in `tests/test_weak.py`, while the comprehensive test suite failed immediately.
+  * Created `tests/test_weak.py` containing:
+    ```python
+    def test_weak(loaded):
+        import gradebook
+        loaded['marks'].append({'student': 'S1', 'assessment': 'A1', 'score': 15.0, 'at': 'now'})
+        gradebook.pct('S1')
+    ```
+  * Running only `tests/test_weak.py` with coverage:
+    ```text
+    tests/test_weak.py . [100%]
+    Name           Stmts   Miss Branch BrPart  Cover   Missing
+    gradebook.py     149    110     44      4    23%   pct() lines 34-43 all covered
+    ```
+    Every line of `pct()` except the guard `return "0"` was covered, despite asserting nothing!
+  * Mutating `/` to `*` in `pct()`:
+    * `pytest tests/test_weak.py`: PASSED (asserted nothing, so silent bug went undetected).
+    * `pytest tests/test_pct.py`: FAILED (3 failed, properly asserting calculation results).
+  * Removed `tests/test_weak.py` and restored `/` in `pct()`.
 * **Two Sentences on Coverage:**
   1. Coverage tells you exactly which statements and conditional branches were executed while the test suite ran, highlighting dead or unvisited code paths.
   2. Coverage cannot tell you whether those executions were asserted for correctness, whether business invariants were satisfied, or whether defect-ridden logic executed and went completely unchecked.
