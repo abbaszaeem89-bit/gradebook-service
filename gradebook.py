@@ -82,11 +82,6 @@ def add_mark(
         raise NotFoundError(f"no such assessment: {mark.assessment}")
     if mark.score > assessment_row["total"]:
         raise ValidationError("score exceeds assessment total")
-    # Remove any existing mark for this student + assessment before adding
-    state["marks"] = [
-        m for m in state["marks"]
-        if not (m["student"] == mark.student and m["assessment"] == mark.assessment)
-    ]
     state["marks"].append(
         {
             "student": mark.student,
