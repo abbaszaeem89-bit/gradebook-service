@@ -14,3 +14,7 @@ def test_over_100_raises() -> None:
 
 def test_exactly_100_fits() -> None:
     ensure_weight_fits([60], 40)
+
+
+def test_float_tolerance_fits() -> None:
+    ensure_weight_fits([9.3, 27.3, 33.7], 29.7)
