@@ -8,7 +8,8 @@ from collections.abc import Callable
 from typing import Any
 
 from errors import ConflictError, GradebookError, NotFoundError, ValidationError
-from models import Mark, parse_assessment, parse_mark, parse_student
+from models import Assessment, Mark, parse_assessment, parse_mark, parse_student
+from rules import ensure_weight_fits
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +49,32 @@ def now() -> str:
     return str(datetime.datetime.now(datetime.timezone.utc))
 
 
+def add_assessment(
+    state: dict[str, Any],
+    assessment: Assessment,
+    save: Callable[[], None],
+) -> None:
+    """Validate, check weight cap, store an assessment, and save."""
+    if assessment.id in state["assessments"]:
+        raise ConflictError(f"Assessment '{assessment.id}' already exists")
+    existing_weights = [float(a["weight"]) for a in state["assessments"].values()]
+    ensure_weight_fits(existing_weights, assessment.weight)
+    state["assessments"][assessment.id] = {
+        "id": assessment.id,
+        "title": assessment.title,
+        "weight": assessment.weight,
+        "total": assessment.total,
+    }
+    save()
+
+
 def add_mark(
     state: dict[str, Any],
     mark: Mark,
     now: Callable[[], str],
     save: Callable[[], None],
 ) -> None:
-    """Check a mark against the gradebook, then record it and save."""
+    """Check a mark against the gradebook, replace any prior mark, and save."""
     if mark.student not in state["students"]:
         raise NotFoundError(f"no such student: {mark.student}")
     assessment_row = state["assessments"].get(mark.assessment)
@@ -62,6 +82,11 @@ def add_mark(
         raise NotFoundError(f"no such assessment: {mark.assessment}")
     if mark.score > assessment_row["total"]:
         raise ValidationError("score exceeds assessment total")
+    # Remove any existing mark for this student + assessment before adding
+    state["marks"] = [
+        m for m in state["marks"]
+        if not (m["student"] == mark.student and m["assessment"] == mark.assessment)
+    ]
     state["marks"].append(
         {
             "student": mark.student,
@@ -149,15 +174,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if self.path == "/assessments":
             assessment = parse_assessment(payload)
-            if assessment.id in STATE["assessments"]:
-                raise ConflictError(f"Assessment '{assessment.id}' already exists")
-            STATE["assessments"][assessment.id] = {
-                "id": assessment.id,
-                "title": assessment.title,
-                "weight": assessment.weight,
-                "total": assessment.total,
-            }
-            save()
+            add_assessment(STATE, assessment, save)
             return 200, STATE["assessments"][assessment.id]
 
         if self.path == "/marks":
