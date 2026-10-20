@@ -236,4 +236,136 @@ After undoing the change:
 - `pct()` is plain logic inside my own program. I can call it directly, and mocking it would hide the very calculation under test.
 - `tmp_path` gives a real, empty file for each test. Testing `load()` and `save()` against it checks what really happens (JSON written and read back, a missing file, a corrupt file). A mock would only check that I called `open`.
 
+---
+
+# Lab 05: Test-Driven Development and Boundary Cases
+
+## Task 1: Initial Coverage Baseline
+* **Initial Test Coverage:** 34% (across all repository files; 44% across core service modules `gradebook.py`, `models.py`, `errors.py`).
+* **File with Lowest Coverage:** `gradebook.py` (37% line coverage, 86 statements missed out of 149) among service modules (and helper scripts at 0%).
+* **Dependencies Installed:** `hypothesis==6.170.5`, `coverage==7.16.2`, `sortedcontainers==2.4.0`.
+* **Configuration:** `.coveragerc` created with branch coverage enabled; `.hypothesis/`, `.coverage`, and `htmlcov/` added to `.gitignore`.
+
+---
+
+## Task 2: Test-Driven Development of ensure_weight_fits
+
+### Cycle 1: `([], 50)` fits
+* **Test:** `test_empty_weights_fits` in `tests/test_rules.py`.
+* **Failure Message (Red):**
+  ```text
+  ModuleNotFoundError: No module named 'rules'
+  ```
+* **Least Code (Green):**
+  A new file `rules.py` defining `def ensure_weight_fits(existing_weights, new_weight): pass`.
+* **Outcome:** Test passed immediately.
+
+### Cycle 2: `([60], 50)` raises ValidationError with "100" in message
+* **Test:** `test_over_100_raises` in `tests/test_rules.py`.
+* **Failure Message (Red):**
+  ```text
+  FAILED tests/test_rules.py::test_over_100_raises - Failed: DID NOT RAISE ValidationError
+  ```
+* **Least Code (Green):**
+  Check `if sum(existing_weights) + new_weight > 100:` and raise `ValidationError("Total weight would be ..., which exceeds the maximum of 100")`.
+* **Outcome:** Test passed.
+
+### Cycle 3: `([60], 40)` fits (exactly 100 allowed)
+* **Test:** `test_exactly_100_fits` in `tests/test_rules.py`.
+* **Did Cycle 3 fail first?**
+  **No, Cycle 3 passed at once.** Because Cycle 2 implemented the strict inequality `> 100`, an exact sum of 100 evaluates to `False` for the rejection condition and did not raise an exception. It successfully pinned down the boundary rule without needing a code edit.
+
+### Cycle 4: `([9.3, 27.3, 33.7], 29.7)` fits (floating-point tolerance)
+* **Test:** `test_float_tolerance_fits` in `tests/test_rules.py`.
+* **Failure Message (Red):**
+  ```text
+  FAILED tests/test_rules.py::test_float_tolerance_fits - errors.ValidationError: Total weight would be 100, which exceeds the maximum of 100.
+  ```
+  *Analysis:* In IEEE 754 floating-point arithmetic, `9.3 + 27.3 + 33.7 + 29.7` evaluates to `100.00000000000001`. A strict `> 100` check incorrectly rejected a valid weight sum of 100 on paper.
+* **Least Code (Green):**
+  Added tolerance `1e-9`: `if total > 100.0 + 1e-9: raise ValidationError(...)`.
+* **Outcome:** Test passed.
+
+---
+
+## Task 3: Refactoring rules.py
+* **Named Constants:** Extracted `MAX_TOTAL_WEIGHT = 100.0` and `TOLERANCE = 1e-9`.
+* **Type Hints:** Added `existing_weights: list[float]`, `new_weight: float`, and `-> None` return type annotation.
+* **Docstrings:** Documented module purpose, function contract, tolerance justification, and exception types.
+* **Static Verification:**
+  * `mypy --strict rules.py` reported: `Success: no issues found in 1 source file`.
+  * `ruff check .` reported: `All checks passed!`.
+
+---
+
+## Task 4: Service Integration (add_assessment Seam)
+* **Seam Function:** Extracted `add_assessment(state, assessment, save)` in `gradebook.py` to decouple assessment validation, weight enforcement, and persistence from HTTP networking.
+* **Test Suite:** `tests/test_add_assessment.py` tests:
+  1. Valid assessment is stored in state and calls `save` once.
+  2. Overweight assessment (exceeding 100) raises `ValidationError`, stores nothing, and does not call `save`.
+  3. Duplicate assessment ID raises `ConflictError`, stores nothing, and does not call `save`.
+* **HTTP Endpoint:** Refactored `POST /assessments` in `Handler.handle_post` to call `add_assessment(STATE, assessment, save)`.
+* **Manual Verification:**
+  * Assessment with weight 60: accepted (HTTP 200).
+  * Assessment with weight 40: accepted (HTTP 200, cumulative total 100).
+  * Assessment with weight 0.5: rejected (HTTP 400 Bad Request, message: `"Total weight would be 100.5, which exceeds the maximum of 100."`).
+
+---
+
+## Task 5: What Coverage Does and Does Not Tell You
+* **Updated Test Coverage:** 34% (56% across core modules `gradebook.py`, `models.py`, `errors.py`, `rules.py`).
+* **Weak Test Experiment:**
+  * Running only `tests/test_weak.py` (which added a mark and called `pct("S1")` without any assertions) covered almost every executable line of `pct()`.
+  * Mutating the calculation operator from `/` to `*` (`got * float(a["weight"]) * float(a["total"])`) still resulted in a passing test in `tests/test_weak.py`, while the comprehensive test suite failed immediately.
+* **Two Sentences on Coverage:**
+  1. Coverage tells you exactly which statements and conditional branches were executed while the test suite ran, highlighting dead or unvisited code paths.
+  2. Coverage cannot tell you whether those executions were asserted for correctness, whether business invariants were satisfied, or whether defect-ridden logic executed and went completely unchecked.
+* **Untested Function in `gradebook.py`:**
+  `main(argv)` has no tests covering its CLI argument parsing, port range validation, or server startup logic.
+
+---
+
+## Task 6: Boundary Cases
+* **Parametrized Boundaries Tested (`tests/test_boundaries.py`):**
+  * Weight boundaries: `0.0` and `100.0` are accepted; `-0.01` and `100.01` are rejected with `ValidationError`.
+  * Assessment total boundaries: `0.01` is accepted; `0.0` is rejected with `ValidationError`.
+  * Score boundaries: For an assessment with total 20, scores `0.0` and `20.0` are accepted; `-0.01` and `20.01` are rejected and nothing is stored.
+* **Mutation Experiment:**
+  * Changed `mark.score > assessment_row["total"]` to `mark.score >= assessment_row["total"]` in `add_mark()`.
+  * Running `pytest` immediately caught the off-by-one regression.
+  * **Failing Boundary Test:** `tests/test_boundaries.py::test_score_accepted[score-at-total-accepted]` failed with `ValidationError: score exceeds assessment total`.
+  * Change reverted back to strict `>`.
+
+---
+
+## Task 7: Hypothesis Property-Based Testing
+* **Property Test:** `tests/test_properties.py::test_pct_does_not_exceed_weight` using Hypothesis strategy `@given(scores=st.lists(st.integers(min_value=0, max_value=20), min_size=1, max_size=5))`.
+* **Shrunk Failing Counterexample Found by Hypothesis:**
+  ```text
+  Falsifying example: test_pct_does_not_exceed_weight(
+      scores=[11, 11],
+  )
+  ```
+* **Explanation of the Defect:**
+  `add_mark()` unconditionally appended every mark to `state["marks"]`, allowing multiple duplicate marks for the same student and assessment to accumulate. In `pct()`, points for all recorded marks are summed together without deduplication, causing the calculated percentage to improperly compound and exceed the assessment's maximum weight limit.
+* **Strict xfail Annotation:**
+  Decorated with `@pytest.mark.xfail(strict=True, reason="duplicate marks are all counted")` so the test suite remained green until the defect was resolved in Task 8.
+
+---
+
+## Task 8: Fixing the Defect and Final Verification
+* **Test-First Verification:**
+  Added `test_new_mark_replaces_old_mark_for_same_student_and_assessment` in `tests/test_add_mark.py` checking that after recording marks 5 and 18 for the same student and assessment, exactly one mark remains with score 18.
+* **Defect Fix:**
+  Updated `add_mark()` in `gradebook.py` to filter out any existing mark for that `(student, assessment)` pair before appending the new mark, ensuring all validations precede any state modifications.
+* **Xfail Removal:**
+  Removed `@pytest.mark.xfail` from `tests/test_properties.py`. With deduplication implemented, the property test passes unconditionally across hundreds of generated score lists.
+* **Final Code Quality Verification:**
+  * `pytest`: 51 passed in 1.26s.
+  * `ruff check .`: All checks passed.
+  * `mypy gradebook.py`: Success: no issues found.
+  * `mypy --strict errors.py models.py rules.py`: Success: no issues found in 3 source files.
+* **Final Coverage Report:**
+  * Total statements: 478, Miss: 326, Branch coverage: 34% (core application modules: 56% overall, `rules.py` 100%, `errors.py` 100%, `models.py` 80%, `gradebook.py` 41%).
+
 
