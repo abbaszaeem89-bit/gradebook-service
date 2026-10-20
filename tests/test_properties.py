@@ -4,7 +4,6 @@ import unittest.mock
 from typing import Any
 from unittest.mock import Mock
 
-import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -13,7 +12,6 @@ from gradebook import add_mark
 from models import Mark
 
 
-@pytest.mark.xfail(strict=True, reason="duplicate marks are all counted")
 @given(scores=st.lists(st.integers(min_value=0, max_value=20), min_size=1, max_size=5))
 @settings(max_examples=200)
 def test_pct_does_not_exceed_weight(scores: list[int]) -> None:

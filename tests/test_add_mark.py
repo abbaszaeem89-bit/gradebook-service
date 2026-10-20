@@ -48,3 +48,17 @@ def test_rejected_mark_changes_nothing(
         add_mark(state, mark, fixed_now, save)
     assert state["marks"] == []
     save.assert_not_called()
+
+
+def test_new_mark_replaces_old_mark_for_same_student_and_assessment(
+    state: dict[str, Any],
+) -> None:
+    """Verify that after two marks for the same student and assessment (scores 5 and 18) there is exactly one mark, with score 18."""
+    save = Mock()
+    add_mark(state, Mark("S1", "A1", 5.0), fixed_now, save)
+    add_mark(state, Mark("S1", "A1", 18.0), fixed_now, save)
+    assert len(state["marks"]) == 1
+    assert state["marks"][0]["score"] == 18.0
+    assert state["marks"][0]["student"] == "S1"
+    assert state["marks"][0]["assessment"] == "A1"
+
